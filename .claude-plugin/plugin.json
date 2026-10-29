@@ -1,0 +1,10 @@
+{
+  "name": "account-sync",
+  "displayName": "Account Sync",
+  "version": "0.1.0",
+  "description": "Shares Claude desktop Code tab sessions, the task backlog, and local scheduled tasks between Claude accounts on the same computer.",
+  "author": {
+    "name": "SegaraRai"
+  },
+  "keywords": ["claude-desktop", "sessions", "accounts", "sync"]
+}

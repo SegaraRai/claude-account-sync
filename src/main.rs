@@ -13,7 +13,7 @@ use claude_account_sync::file_ops::{self, BackupUsage};
 use claude_account_sync::pass::{self, PassOptions, Report};
 use claude_account_sync::replica::{self, ReplicaId};
 use claude_account_sync::state::StateDir;
-use claude_account_sync::{install, logging, sessions, skill, watch};
+use claude_account_sync::{install, logging, sessions, watch};
 
 /// Shares Claude desktop Code tab sessions, backlog, and scheduled tasks between accounts on this computer.
 #[derive(Parser)]
@@ -58,9 +58,6 @@ enum Command {
     /// Shows or changes the config.
     #[command(subcommand)]
     Config(ConfigCommand),
-    /// Installs the Claude Code skill that describes this CLI.
-    #[command(subcommand)]
-    Skill(SkillCommand),
 }
 
 #[derive(Subcommand)]
@@ -77,23 +74,6 @@ enum ConfigCommand {
     Exclude { pattern: ReplicaPattern },
     /// Removes an entry that `exclude` added.
     Include { pattern: ReplicaPattern },
-}
-
-#[derive(Subcommand)]
-enum SkillCommand {
-    /// Writes the skill to `~/.claude/skills/claude-account-sync/SKILL.md`.
-    Install {
-        /// The skills folder. Defaults to `~/.claude/skills`.
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Removes the skill folder.
-    Uninstall {
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Prints the skill.
-    Show,
 }
 
 fn main() -> ExitCode {
@@ -219,16 +199,17 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             watch::run(&data_dir()?, &state_dir, interval)?;
         }
         Command::Install => {
-            let agent = install::install(&state_dir)?;
+            let installed = install::install(&state_dir)?;
             print_done(
                 cli.json,
-                json!({ "agent": agent, "log": state_dir.log_file() }),
+                json!({ "installed": installed, "log": state_dir.log_file() }),
                 || {
-                    format!(
-                        "installed and started {}\nlog: {}",
-                        agent.display(),
-                        state_dir.log_file().display()
-                    )
+                    let mut text = format!("installed and started {}", installed.agent.display());
+                    for path in &installed.cleared_quarantine {
+                        text +=
+                            &format!("\nremoved the quarantine attribute from {}", path.display());
+                    }
+                    text + &format!("\nlog: {}", state_dir.log_file().display())
                 },
             );
         }
@@ -239,7 +220,6 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             });
         }
         Command::Config(command) => return run_config(command, &config_path, cli.json),
-        Command::Skill(command) => run_skill(command, cli.json)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -279,29 +259,6 @@ fn run_config(command: ConfigCommand, path: &Path, json: bool) -> anyhow::Result
         println!("saved {}", path.display());
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn run_skill(command: SkillCommand, json: bool) -> anyhow::Result<()> {
-    let skills_dir = |dir: Option<PathBuf>| {
-        dir.or_else(skill::default_skills_dir)
-            .context("cannot find the home folder")
-    };
-    match command {
-        SkillCommand::Install { dir } => {
-            let path = skill::install(&skills_dir(dir)?)?;
-            print_done(json, json!({ "skill": path }), || {
-                format!("installed {}", path.display())
-            });
-        }
-        SkillCommand::Uninstall { dir } => {
-            skill::uninstall(&skills_dir(dir)?)?;
-            print_done(json, json!({ "uninstalled": true }), || {
-                "removed the skill".into()
-            });
-        }
-        SkillCommand::Show => print!("{}", skill::SKILL_MD),
-    }
-    Ok(())
 }
 
 /// One row of `accounts`.

@@ -49,6 +49,8 @@ Every command accepts `--json` and then prints one JSON document. `sync` exits w
 
 `install` copies `claude-account-sync` and `claude-account-sync-agent` into the state folder's `bin/`. It registers the agent under `HKCU\...\Run` on Windows, or as the launchd agent `io.github.claude-account-sync` on macOS. The agent opens no window and writes its log to `agent.log`.
 
+On macOS, `install` also removes the `com.apple.quarantine` attribute that a browser adds to downloaded files, so that Gatekeeper does not block the copied agent at login. `install` prints each file whose attribute it removed. The executables still need a code signature: Cargo signs arm64 builds ad hoc, and a distributed build should be signed and notarized.
+
 The tool stores its config, state, backups, and logs in these folders:
 
 - Windows: `%LOCALAPPDATA%\claude-account-sync`
@@ -91,13 +93,16 @@ The watcher reads the config before each pass. A change to `dataDir` takes effec
 
 ## Use from Claude Code
 
-The CLI contains a Claude Code skill that tells Claude how to find, run, configure, and install the tool:
+This repository is also a Claude Code plugin marketplace. Its plugin `account-sync` contains the skill [`skills/account-sync/SKILL.md`](skills/account-sync/SKILL.md), which tells Claude how to build, run, configure, and install the tool. The plugin name does not start with `claude-` because Claude Code reserves that prefix.
 
 ```sh
-claude-account-sync skill install   # writes ~/.claude/skills/claude-account-sync/SKILL.md
+claude plugin marketplace add <owner>/<repo>   # or a local path to this repository
+claude plugin install account-sync@account-sync
 ```
 
-The source of the skill is [`skills/claude-account-sync/SKILL.md`](skills/claude-account-sync/SKILL.md). Run `skill install` again after an update so that the skill matches the CLI.
+When the CLI is not installed yet, the skill builds it from the plugin's copy of this repository into the plugin data folder, which needs Rust. It then runs `install`. After a plugin update, Claude builds the CLI and runs `install` again, so that the installed CLI matches the skill.
+
+Keep `version` in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) equal to the crate version. Users receive a plugin update only when this version changes.
 
 ## Verification
 
@@ -105,4 +110,5 @@ The source of the skill is [`skills/claude-account-sync/SKILL.md`](skills/claude
 cargo test
 cargo clippy --all-targets
 cargo check --target aarch64-apple-darwin --all-targets
+claude plugin validate .
 ```

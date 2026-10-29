@@ -9,6 +9,38 @@ use anyhow::{Context, bail};
 
 const LABEL: &str = "io.github.claude-account-sync";
 
+const QUARANTINE_ATTRIBUTE: &str = "com.apple.quarantine";
+
+/// Removes the quarantine attribute from `path` and returns `true` when the file had one.
+///
+/// `xattr -p` checks for the attribute first, because the error message of `xattr -d` for a missing attribute
+/// depends on the system language.
+pub fn clear_quarantine(path: &Path) -> anyhow::Result<bool> {
+    let present = Command::new("xattr")
+        .args(["-p", QUARANTINE_ATTRIBUTE])
+        .arg(path)
+        .output()
+        .context("cannot run xattr")?
+        .status
+        .success();
+    if !present {
+        return Ok(false);
+    }
+    let output = Command::new("xattr")
+        .args(["-d", QUARANTINE_ATTRIBUTE])
+        .arg(path)
+        .output()
+        .context("cannot run xattr")?;
+    if !output.status.success() {
+        bail!(
+            "cannot remove {QUARANTINE_ATTRIBUTE} from {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(true)
+}
+
 fn plist_path() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().context("cannot find the home folder")?;
     Ok(home

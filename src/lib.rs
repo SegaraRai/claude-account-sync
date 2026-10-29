@@ -22,7 +22,6 @@
 //! - [`item_file`]: merges collections that the app stores as an item array in one JSON file.
 //! - [`file_ops`]: reads and writes files atomically and keeps backups.
 //! - [`watch`], [`install`], [`logging`]: run the background watcher.
-//! - [`skill`]: installs the Claude Code skill that describes the CLI.
 
 pub mod app;
 pub mod backlog;
@@ -36,6 +35,5 @@ pub mod pass;
 pub mod replica;
 pub mod scheduled_tasks;
 pub mod sessions;
-pub mod skill;
 pub mod state;
 pub mod watch;

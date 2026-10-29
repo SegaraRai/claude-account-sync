@@ -1,5 +1,5 @@
 ---
-name: claude-account-sync
+name: account-sync
 description: Share Claude desktop Code tab sessions, the task backlog, and local scheduled tasks between Claude accounts on the same computer with the claude-account-sync CLI. Use when the user wants sessions from another account to appear in the sidebar, asks whether account sync works, wants to change what is synced or which accounts take part, or wants to install, update, pause, or remove the sync watcher.
 ---
 
@@ -17,7 +17,15 @@ Use the first one that exists:
    - Windows: `%LOCALAPPDATA%\claude-account-sync\bin\claude-account-sync.exe`
    - macOS: `~/Library/Application Support/claude-account-sync/bin/claude-account-sync`
 2. `claude-account-sync` on `PATH`.
-3. A build from the source repository: run `cargo build --release` in the repository, then use `target/release/claude-account-sync`. If you do not know where the repository is, ask the user.
+3. A build from this plugin's source. The plugin folder is the tool's repository, and the build needs Rust (`cargo`). Build into the plugin data folder, because the plugin folder is replaced on each plugin update:
+
+   ```sh
+   cargo build --release --manifest-path "${CLAUDE_PLUGIN_ROOT}/Cargo.toml" --target-dir "${CLAUDE_PLUGIN_DATA}/target"
+   ```
+
+   Then use `${CLAUDE_PLUGIN_DATA}/target/release/claude-account-sync`. Run `install` from this build to place a lasting copy in the installed location.
+
+After a plugin update, build again and run `install` again, so that the installed copy matches this skill.
 
 Pass `--json` to every command whose output you read. Plain output is for people.
 
@@ -74,7 +82,7 @@ The watcher reads the config before each pass. A `data-dir` change needs `instal
 
 ## Install, update, or remove the watcher
 
-`install` registers a login item (Windows `Run` registry key, or a macOS launchd agent) and starts it. This changes the user's startup configuration, so ask the user before you run it.
+`install` registers a login item (Windows `Run` registry key, or a macOS launchd agent) and starts it. This changes the user's startup configuration, so ask the user before you run it. On macOS, `install` also removes the quarantine attribute from the installed copies, and `installed.clearedQuarantine` lists them. Mention this to the user when the list is not empty.
 
 ```sh
 claude-account-sync install     # also updates the installed copy after a rebuild
