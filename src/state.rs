@@ -43,10 +43,19 @@ pub struct StateDir {
 }
 
 impl StateDir {
-    /// Returns the default folder: `%LOCALAPPDATA%\claude-account-sync` on Windows and
+    /// Returns the default folder: `%USERPROFILE%\.claude-account-sync` on Windows and
     /// `~/Library/Application Support/claude-account-sync` on macOS.
+    ///
+    /// On Windows, the folder is outside `AppData` because Claude Code may run inside the MSIX package of the
+    /// Microsoft Store app. Windows redirects new files that a packaged process writes under `AppData` into the
+    /// package's private storage. The CLI inside the package and the agent outside it would then use different
+    /// folders.
     pub fn default_root() -> Option<PathBuf> {
-        dirs::data_local_dir().map(|dir| dir.join("claude-account-sync"))
+        if cfg!(windows) {
+            dirs::home_dir().map(|dir| dir.join(".claude-account-sync"))
+        } else {
+            dirs::data_local_dir().map(|dir| dir.join("claude-account-sync"))
+        }
     }
 
     pub fn state_file(&self) -> PathBuf {

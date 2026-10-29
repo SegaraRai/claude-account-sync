@@ -47,14 +47,16 @@ claude-account-sync uninstall       # stop the watcher and remove the login regi
 
 Every command accepts `--json` and then prints one JSON document. `sync` exits with code 2 when the pass finished but skipped entries or replicas.
 
-`install` copies `claude-account-sync` and `claude-account-sync-agent` into the state folder's `bin/`. It registers the agent under `HKCU\...\Run` on Windows, or as the launchd agent `io.github.claude-account-sync` on macOS. The agent opens no window and writes its log to `agent.log`.
+`install` copies `claude-account-sync` and `claude-account-sync-agent` into the state folder's `bin/`. It registers the agent as the Task Scheduler task `claude-account-sync` with a logon trigger on Windows, or as the launchd agent `io.github.claude-account-sync` on macOS. The agent opens no window and writes its log to `agent.log`.
 
 On macOS, `install` also removes the `com.apple.quarantine` attribute that a browser adds to downloaded files, so that Gatekeeper does not block the copied agent at login. `install` prints each file whose attribute it removed. The executables still need a code signature: Cargo signs arm64 builds ad hoc, and a distributed build should be signed and notarized.
 
 The tool stores its config, state, backups, and logs in these folders:
 
-- Windows: `%LOCALAPPDATA%\claude-account-sync`
+- Windows: `%USERPROFILE%\.claude-account-sync`
 - macOS: `~/Library/Application Support/claude-account-sync`
+
+On Windows, the folder and the login registration avoid `AppData` and the `Run` registry key. The Microsoft Store version of the Claude desktop app runs Claude Code inside its MSIX package. Windows redirects a packaged process's writes to new files under `AppData` and to `HKCU` into private package storage, so programs outside the package and Windows at login do not see them.
 
 `--data-dir` and `--state-dir` override the app's data folder and this folder.
 

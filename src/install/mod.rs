@@ -9,7 +9,7 @@
 //! to downloaded files, and the copy keeps it. Gatekeeper may then refuse to start the unnotarized agent at login,
 //! when no window can ask the user. The user already chose to run this executable by running `install`.
 //!
-//! - `windows`: registers the agent under the current user's `Run` registry key.
+//! - `windows`: registers the agent as a Task Scheduler task that starts at the user's logon.
 //! - `macos`: registers the agent as a launchd user agent.
 
 #[cfg(target_os = "macos")]

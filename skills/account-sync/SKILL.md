@@ -14,7 +14,7 @@ It does not sync claude.ai chats, Projects, Artifacts, Cowork sessions, connecto
 Use the first one that exists:
 
 1. The installed copy:
-   - Windows: `%LOCALAPPDATA%\claude-account-sync\bin\claude-account-sync.exe`
+   - Windows: `%USERPROFILE%\.claude-account-sync\bin\claude-account-sync.exe`
    - macOS: `~/Library/Application Support/claude-account-sync/bin/claude-account-sync`
 2. `claude-account-sync` on `PATH`.
 3. A build from this plugin's source. The plugin folder is the tool's repository, and the build needs Rust (`cargo`). Build into the plugin data folder, because the plugin folder is replaced on each plugin update:
@@ -82,7 +82,7 @@ The watcher reads the config before each pass. A `data-dir` change needs `instal
 
 ## Install, update, or remove the watcher
 
-`install` registers a login item (Windows `Run` registry key, or a macOS launchd agent) and starts it. This changes the user's startup configuration, so ask the user before you run it. On macOS, `install` also removes the quarantine attribute from the installed copies, and `installed.clearedQuarantine` lists them. Mention this to the user when the list is not empty.
+`install` registers a login item (a Windows Task Scheduler task named `claude-account-sync`, or a macOS launchd agent) and starts it. This changes the user's startup configuration, so ask the user before you run it. On macOS, `install` also removes the quarantine attribute from the installed copies, and `installed.clearedQuarantine` lists them. Mention this to the user when the list is not empty.
 
 ```sh
 claude-account-sync install     # also updates the installed copy after a rebuild
@@ -91,7 +91,7 @@ claude-account-sync uninstall   # stops the watcher; keeps state, backups, and l
 
 To pause syncing without removing the watcher, disable all three collections with `config set`.
 
-The watcher log is `agent.log` in the state folder: `%LOCALAPPDATA%\claude-account-sync` on Windows, `~/Library/Application Support/claude-account-sync` on macOS.
+The watcher log is `agent.log` in the state folder: `%USERPROFILE%\.claude-account-sync` on Windows, `~/Library/Application Support/claude-account-sync` on macOS.
 
 ## Restore from a backup
 
