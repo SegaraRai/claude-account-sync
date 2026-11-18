@@ -1,0 +1,117 @@
+name: Build
+
+# Builds, lints, and tests the CLI and the agent on each release platform, and uploads one ZIP
+# archive per platform. CI and Release both call this workflow, so a release ships exactly what
+# CI checks.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.100.0"
+  CARGO_TERM_COLOR: always
+  # A cache restore can stall when the account exceeds its Actions cache egress limit. The
+  # default of 10 minutes would delay every build.
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - platform: windows-arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - platform: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt --target "${{ matrix.target }}"
+          rustup default "$RUST_VERSION"
+
+      - name: Restore Cargo outputs
+        id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ matrix.target }}-rust-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-rust-${{ env.RUST_VERSION }}-
+
+      # Formatting does not depend on the platform.
+      - name: Check formatting
+        if: matrix.platform == 'windows-x64'
+        run: cargo fmt --check
+
+      # Each platform compiles different `cfg` branches, so each one runs Clippy.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}
+
+      - name: Build release executables
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Only `main` saves the cache, so branches cannot fill it with entries that `main` never uses.
+      - name: Save Cargo outputs
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $stage = "dist/claude-account-sync-$env:PLATFORM"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item "target/$env:TARGET/release/claude-account-sync.exe", "target/$env:TARGET/release/claude-account-sync-agent.exe", README.md $stage
+          Compress-Archive -Path $stage -DestinationPath "dist/claude-account-sync-$env:PLATFORM.zip"
+
+      # `ditto` keeps the executable bits and the ad hoc signatures that the linker adds.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          stage="dist/claude-account-sync-$PLATFORM"
+          mkdir -p "$stage"
+          cp "target/$TARGET/release/claude-account-sync" "target/$TARGET/release/claude-account-sync-agent" README.md "$stage/"
+          codesign --verify --verbose "$stage/claude-account-sync" "$stage/claude-account-sync-agent"
+          ditto -c -k --keepParent "$stage" "dist/claude-account-sync-$PLATFORM.zip"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: claude-account-sync-${{ matrix.platform }}
+          path: dist/claude-account-sync-${{ matrix.platform }}.zip
+          if-no-files-found: error
+          retention-days: 14

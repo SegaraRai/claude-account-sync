@@ -1,0 +1,27 @@
+name: CI
+
+# Every push to a branch and every pull request builds, lints, and tests all release platforms,
+# and keeps the archives as workflow artifacts. Tags run the Release workflow instead.
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml

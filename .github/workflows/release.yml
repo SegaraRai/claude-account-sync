@@ -1,0 +1,116 @@
+name: Release
+
+# Pushing a tag `v<version>` builds every platform and creates a draft GitHub Release. Its notes
+# are the matching section of CHANGELOG.md; its assets are the archives and `SHA256SUMS`. A
+# maintainer publishes the draft. See docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare the tag with Cargo.toml, plugin.json, and CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          plugin=$(jq -r .version .claude-plugin/plugin.json)
+          echo "tag $TAG, crate $crate, plugin $plugin"
+          if [ "$crate" != "$version" ] || [ "$plugin" != "$version" ]; then
+            echo "::error::Cargo.toml and .claude-plugin/plugin.json must name version $version"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section \"## [$version]\""
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build.yml
+
+  draft:
+    name: Draft GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: claude-account-sync-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release/
+      - name: List checksums
+        working-directory: ${{ runner.temp }}/release
+        run: sha256sum -- *.zip > SHA256SUMS
+      - uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release/*.zip
+      # A rerun replaces the assets and the notes of an existing draft. A published release is
+      # never changed.
+      - name: Create or update the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE: ${{ runner.temp }}/release
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          # The section body runs from its heading to the next `## ` heading.
+          awk -v heading="## [${TAG#v}]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes"
+          cat >> "$notes" << EOF
+
+          ## Downloads
+
+          | Archive | Platform |
+          | --- | --- |
+          | \`claude-account-sync-windows-x64.zip\` | Windows x64 |
+          | \`claude-account-sync-windows-arm64.zip\` | Windows Arm64 |
+          | \`claude-account-sync-macos-arm64.zip\` | macOS on Apple silicon |
+
+          Check the archives against \`SHA256SUMS\`, or verify their build provenance with
+          \`gh attestation verify <archive> --repo $GITHUB_REPOSITORY\`. The macOS executables have
+          ad hoc signatures and are not notarized.
+          EOF
+          flags=()
+          case "$TAG" in *-*) flags+=(--prerelease --latest=false) ;; esac
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null || true)
+          case "$draft" in
+            false)
+              echo "::warning::The GitHub Release $TAG is already published; nothing changed."
+              ;;
+            true)
+              gh release upload "$TAG" "$RELEASE"/* --clobber
+              gh release edit "$TAG" --notes-file "$notes"
+              ;;
+            *)
+              gh release create "$TAG" "$RELEASE"/* --draft --verify-tag --title "$TAG" --notes-file "$notes" "${flags[@]}"
+              ;;
+          esac
