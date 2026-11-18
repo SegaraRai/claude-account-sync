@@ -134,12 +134,8 @@ impl Observer {
         }
         let (actions, recheck) = self.step(observation, Instant::now());
         let store = ProfileStore::new(&state_dir.root);
-        if let Some((account, identity)) = super::read_cli_identity() {
-            match store.record_identity(&account, &identity) {
-                Ok(true) => log::info!("learned the name of account {account}"),
-                Ok(false) => {}
-                Err(error) => log::warn!("cannot store the name of {account}: {error}"),
-            }
+        for account in store.refresh_identities(data_dir) {
+            log::info!("updated the name and email address of account {account}");
         }
         for action in actions {
             let result = match &action {

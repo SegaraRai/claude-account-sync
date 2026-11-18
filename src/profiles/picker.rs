@@ -27,6 +27,17 @@ pub struct PickerRow {
     pub status: String,
     /// `false` when the account cannot be restored, or is the one that is signed in now.
     pub selectable: bool,
+    /// `true` when the user can remove the account from the tool: any saved account but the one signed in now.
+    pub removable: bool,
+}
+
+/// What the user chose in the picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PickerChoice {
+    /// Switch to this account, or sign in to another one with [`NEW_SIGN_IN`].
+    Switch(String),
+    /// Remove this account and its saved sign-in from the tool. The user already confirmed it.
+    Remove(String),
 }
 
 impl PickerRow {
@@ -77,6 +88,7 @@ pub fn rows(profiles: &[Profile], login: &LoginState, now: SystemTime) -> Vec<Pi
                     .last_active_at
                     .map_or_else(|| "never".to_owned(), |millis| format_time(millis, now)),
                 selectable: !is_current && profile.can_restore(),
+                removable: !is_current,
                 status,
             }
         })
@@ -87,8 +99,9 @@ pub fn rows(profiles: &[Profile], login: &LoginState, now: SystemTime) -> Vec<Pi
             name: "+ Sign in to another account".to_owned(),
             email: None,
             last_used: String::new(),
-            status: "keeps the current account usable".to_owned(),
+            status: String::new(),
             selectable: true,
+            removable: false,
         });
     }
     rows
@@ -124,9 +137,9 @@ pub struct GuiUi;
 /// The interaction of a switch through the terminal.
 pub struct TerminalUi;
 
-/// Shows the picker window. Returns the chosen account, or `None` when the user cancelled.
-pub fn pick_gui(rows: &[PickerRow], reason: PickerReason) -> anyhow::Result<Option<String>> {
-    if !rows.iter().any(|row| row.selectable) {
+/// Shows the picker window. Returns the user's choice, or `None` when the user cancelled.
+pub fn pick_gui(rows: &[PickerRow], reason: PickerReason) -> anyhow::Result<Option<PickerChoice>> {
+    if !rows.iter().any(|row| row.selectable || row.removable) {
         alert_gui(&no_choice_message(rows))?;
         return Ok(None);
     }
@@ -141,20 +154,32 @@ pub fn pick_gui(rows: &[PickerRow], reason: PickerReason) -> anyhow::Result<Opti
             "prompt": reason.prompt(),
             "rows": rows,
             "preselect": preselect,
+            "removeTexts": rows
+                .iter()
+                .filter(|row| row.removable)
+                .map(|row| (row.account.clone(), remove_message(row)))
+                .collect::<std::collections::BTreeMap<_, _>>(),
         });
         let output = powershell(PICKER_PS, &[("CLAUDE_ACCOUNT_SYNC_DATA", data.to_string())])
             .stdout(Stdio::piped())
             .output()
             .context("cannot start Windows PowerShell")?;
-        let chosen = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Ok(rows
-            .iter()
-            .find(|row| row.selectable && row.account == chosen)
-            .map(|row| row.account.clone()))
+        Ok(parse_choice(&String::from_utf8_lossy(&output.stdout), rows))
     } else if cfg!(target_os = "macos") {
-        let choices: Vec<&PickerRow> = rows.iter().filter(|row| row.selectable).collect();
-        let mut args = vec![reason.prompt().to_owned()];
-        args.extend(choices.iter().map(|row| {
+        pick_macos(rows, reason)
+    } else {
+        bail!("the picker window supports only Windows and macOS")
+    }
+}
+
+/// The macOS picker. `choose from list` has no room for another button, so the list ends with an item that
+/// opens a second list of the accounts to remove.
+fn pick_macos(rows: &[PickerRow], reason: PickerReason) -> anyhow::Result<Option<PickerChoice>> {
+    const REMOVE_ITEM: &str = "Remove an account…";
+    let choices: Vec<&PickerRow> = rows.iter().filter(|row| row.selectable).collect();
+    let mut items: Vec<String> = choices
+        .iter()
+        .map(|row| {
             if row.account == NEW_SIGN_IN {
                 return row.name.clone();
             }
@@ -163,27 +188,80 @@ pub fn pick_gui(rows: &[PickerRow], reason: PickerReason) -> anyhow::Result<Opti
                 text += &format!("  ({})", row.status);
             }
             text
-        }));
-        let output = osascript(CHOOSE_AS, &args)
-            .stdout(Stdio::piped())
-            .output()
-            .context("cannot start osascript")?;
-        let index: Option<usize> = String::from_utf8_lossy(&output.stdout).trim().parse().ok();
-        Ok(index
-            .and_then(|index| choices.get(index.checked_sub(1)?))
-            .map(|row| row.account.clone()))
+        })
+        .collect();
+    let removable: Vec<&PickerRow> = rows.iter().filter(|row| row.removable).collect();
+    if !removable.is_empty() {
+        items.push(REMOVE_ITEM.to_owned());
+    }
+    let Some(index) = choose_macos(reason.prompt(), "Switch", &items)? else {
+        return Ok(None);
+    };
+    if let Some(row) = choices.get(index) {
+        return Ok(Some(PickerChoice::Switch(row.account.clone())));
+    }
+    let items: Vec<String> = removable
+        .iter()
+        .map(|row| format!("{}  —  last used {}", row.label(), row.last_used))
+        .collect();
+    let Some(row) = choose_macos("Choose the account to remove.", "Remove…", &items)?
+        .and_then(|index| removable.get(index))
+    else {
+        return Ok(None);
+    };
+    let confirmed = osascript(
+        CONFIRM_AS,
+        &[TITLE.into(), remove_message(row), "Remove".into()],
+    )
+    .status()?
+    .success();
+    Ok(confirmed.then(|| PickerChoice::Remove(row.account.clone())))
+}
+
+/// Shows `items` in a list and returns the index of the chosen one.
+fn choose_macos(prompt: &str, ok: &str, items: &[String]) -> anyhow::Result<Option<usize>> {
+    let mut args = vec![prompt.to_owned(), ok.to_owned()];
+    args.extend(items.iter().cloned());
+    let output = osascript(CHOOSE_AS, &args)
+        .stdout(Stdio::piped())
+        .output()
+        .context("cannot start osascript")?;
+    let index: Option<usize> = String::from_utf8_lossy(&output.stdout).trim().parse().ok();
+    Ok(index.and_then(|index| index.checked_sub(1)))
+}
+
+/// Parses what the Windows picker printed: an account to switch to, or `remove:` and an account.
+fn parse_choice(output: &str, rows: &[PickerRow]) -> Option<PickerChoice> {
+    let output = output.trim();
+    let (remove, account) = match output.strip_prefix("remove:") {
+        Some(account) => (true, account),
+        None => (false, output),
+    };
+    let row = rows.iter().find(|row| row.account == account)?;
+    if remove {
+        row.removable
+            .then(|| PickerChoice::Remove(row.account.clone()))
     } else {
-        bail!("the picker window supports only Windows and macOS")
+        row.selectable
+            .then(|| PickerChoice::Switch(row.account.clone()))
     }
 }
 
-/// Asks in the terminal. Returns the chosen account, or `None` when the user entered nothing.
-pub fn pick_terminal(rows: &[PickerRow]) -> anyhow::Result<Option<String>> {
-    if !rows.iter().any(|row| row.selectable) {
+/// The question that confirms removing the account of `row`.
+fn remove_message(row: &PickerRow) -> String {
+    format!(
+        "Remove {} from claude-account-sync?\n\nIts saved sign-in, name, and last-used time are deleted, so you cannot switch to it until you sign in to it in the app again. The account itself and its sessions stay as they are.",
+        row.label()
+    )
+}
+
+/// Asks in the terminal. Returns the user's choice, or `None` when the user entered nothing.
+pub fn pick_terminal(rows: &[PickerRow]) -> anyhow::Result<Option<PickerChoice>> {
+    if !rows.iter().any(|row| row.selectable || row.removable) {
         bail!("{}", no_choice_message(rows));
     }
     for (index, row) in rows.iter().enumerate() {
-        let number = if row.selectable {
+        let number = if row.selectable || row.removable {
             format!("{:>2})", index + 1)
         } else {
             "   ".to_owned()
@@ -204,7 +282,7 @@ pub fn pick_terminal(rows: &[PickerRow]) -> anyhow::Result<Option<String>> {
             );
         }
     }
-    print!("switch to (number, empty to cancel): ");
+    print!("switch to (number; r and a number to remove; empty to cancel): ");
     std::io::stdout().flush()?;
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line)?;
@@ -212,13 +290,31 @@ pub fn pick_terminal(rows: &[PickerRow]) -> anyhow::Result<Option<String>> {
     if line.is_empty() {
         return Ok(None);
     }
-    let row = line
+    let (remove, number) = match line.strip_prefix(['r', 'R']) {
+        Some(number) => (true, number.trim()),
+        None => (false, line),
+    };
+    let row = number
         .parse::<usize>()
         .ok()
         .and_then(|number| rows.get(number.checked_sub(1)?))
-        .filter(|row| row.selectable)
-        .with_context(|| format!("{line:?} is not one of the numbers"))?;
-    Ok(Some(row.account.clone()))
+        .filter(|row| {
+            if remove {
+                row.removable
+            } else {
+                row.selectable
+            }
+        })
+        .with_context(|| format!("{line:?} is not one of the choices"))?;
+    if !remove {
+        return Ok(Some(PickerChoice::Switch(row.account.clone())));
+    }
+    print!("{}\n[y/N] ", remove_message(row));
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes")
+        .then(|| PickerChoice::Remove(row.account.clone())))
 }
 
 fn no_choice_message(rows: &[PickerRow]) -> String {
@@ -286,7 +382,7 @@ impl SwitchUi for GuiUi {
             )
             .status()?
         } else {
-            osascript(CONFIRM_AS, &[TITLE.into(), text]).status()?
+            osascript(CONFIRM_AS, &[TITLE.into(), text, "Quit and switch".into()]).status()?
         };
         Ok(status.success())
     }
@@ -459,11 +555,25 @@ $buttons.Height = 44
 $buttons.Padding = New-Object System.Windows.Forms.Padding(6)
 $cancel = New-Object System.Windows.Forms.Button -Property @{ Text = 'Cancel'; DialogResult = 'Cancel'; AutoSize = $true }
 $ok = New-Object System.Windows.Forms.Button -Property @{ Text = 'Switch'; DialogResult = 'OK'; AutoSize = $true }
+$remove = New-Object System.Windows.Forms.Button -Property @{ Text = 'Remove…'; AutoSize = $true }
+$remove.Margin = New-Object System.Windows.Forms.Padding(3, 3, 24, 3)
 $buttons.Controls.Add($cancel)
 $buttons.Controls.Add($ok)
-$update = { $ok.Enabled = ($list.SelectedItems.Count -eq 1 -and $list.SelectedItems[0].Tag.selectable) }
+$buttons.Controls.Add($remove)
+$script:removed = $null
+$update = {
+  $selected = $list.SelectedItems.Count -eq 1
+  $ok.Enabled = ($selected -and $list.SelectedItems[0].Tag.selectable)
+  $remove.Enabled = ($selected -and $list.SelectedItems[0].Tag.removable)
+}
 $list.add_SelectedIndexChanged($update)
 $list.add_DoubleClick({ if ($ok.Enabled) { $form.DialogResult = 'OK'; $form.Close() } })
+$remove.add_Click({
+  $row = $list.SelectedItems[0].Tag
+  $text = $data.removeTexts.($row.account)
+  $answer = [System.Windows.Forms.MessageBox]::Show($form, $text, $data.title, 'YesNo', 'Warning', 'Button2')
+  if ($answer -eq 'Yes') { $script:removed = $row.account; $form.DialogResult = 'Abort'; $form.Close() }
+})
 & $update
 $form.AcceptButton = $ok
 $form.CancelButton = $cancel
@@ -471,7 +581,10 @@ $form.Controls.Add($list)
 $form.Controls.Add($label)
 $form.Controls.Add($buttons)
 $form.add_Shown({ $form.Activate(); $list.Focus() })
-if ($form.ShowDialog() -eq 'OK' -and $list.SelectedItems.Count -eq 1) {
+$result = $form.ShowDialog()
+if ($result -eq 'Abort' -and $script:removed) {
+  [Console]::Out.Write('remove:' + $script:removed)
+} elseif ($result -eq 'OK' -and $list.SelectedItems.Count -eq 1) {
   [Console]::Out.Write($list.SelectedItems[0].Tag.account)
 }
 "#;
@@ -535,9 +648,10 @@ $form.add_Shown({ $form.Activate() })
 const CHOOSE_AS: &str = r#"
 on run argv
   set promptText to item 1 of argv
-  set theItems to items 2 thru -1 of argv
+  set okName to item 2 of argv
+  set theItems to items 3 thru -1 of argv
   activate
-  set picked to choose from list theItems with title "Claude account" with prompt promptText OK button name "Switch" default items {item 1 of theItems}
+  set picked to choose from list theItems with title "Claude account" with prompt promptText OK button name okName default items {item 1 of theItems}
   if picked is false then return ""
   set p to item 1 of picked
   repeat with i from 1 to count of theItems
@@ -557,7 +671,7 @@ end run
 const CONFIRM_AS: &str = r#"
 on run argv
   activate
-  display dialog (item 2 of argv) with title (item 1 of argv) buttons {"Cancel", "Quit and switch"} default button "Cancel" cancel button "Cancel" with icon caution
+  display dialog (item 2 of argv) with title (item 1 of argv) buttons {"Cancel", item 3 of argv} default button "Cancel" cancel button "Cancel" with icon caution
 end run
 "#;
 
@@ -624,8 +738,26 @@ mod tests {
                 (false, "signed out: sign in again in the app"),
                 (true, "last used"),
                 (true, ""),
-                (true, "keeps the current account usable"),
+                (true, ""),
             ]
         );
+        let removable: Vec<bool> = rows.iter().map(|row| row.removable).collect();
+        assert_eq!(removable, [false, true, true, true, false]);
+
+        assert_eq!(
+            parse_choice(&format!("{c}\r\n"), &rows),
+            Some(PickerChoice::Switch(c.into()))
+        );
+        assert_eq!(
+            parse_choice(&format!("remove:{b}"), &rows),
+            Some(PickerChoice::Remove(b.into()))
+        );
+        assert_eq!(parse_choice(b, &rows), None, "not selectable");
+        assert_eq!(
+            parse_choice(&format!("remove:{a}"), &rows),
+            None,
+            "signed in now"
+        );
+        assert_eq!(parse_choice("", &rows), None);
     }
 }

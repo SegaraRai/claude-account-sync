@@ -12,6 +12,8 @@ First release.
 - **Switching:** Save each account's sign-in and switch the app between accounts without signing out, with `switch [<account>]`. The tool quits the app, restores the sign-in, and starts the app again, and asks first when Code tab sessions are running.
 - **Switching:** Add another account without signing out of the current one, with `switch --new`.
 - **Switching:** Show an account picker with each account's name, email, and last use when the user signs out of the app.
+- **Switching:** Remove a saved account from the picker with **Remove…**, or with `profiles forget`.
+- **Switching:** Keep each account's name and email address up to date from the app's own cache of the signed-in account, so that accounts show their names without a Code tab session.
 - **Tray:** Switch accounts from an icon in the Windows notification area or the macOS menu bar.
 - **Install:** Install the CLI and a background agent that runs at login on Windows and macOS, with `install` and `uninstall`.
 - **Plugin:** Use the tool from Claude Code through the `account-sync` plugin and its skill.

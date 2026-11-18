@@ -11,7 +11,7 @@ use claude_account_sync::app::{AppStatus, SESSIONS_DIR};
 use claude_account_sync::config::{Config, ConfigKey, ReplicaPattern};
 use claude_account_sync::file_ops::{self, BackupUsage};
 use claude_account_sync::pass::{self, PassOptions, Report};
-use claude_account_sync::profiles::picker::{self, GuiUi, PickerReason, TerminalUi};
+use claude_account_sync::profiles::picker::{self, GuiUi, PickerChoice, PickerReason, TerminalUi};
 use claude_account_sync::profiles::switch::{self, SwitchOptions, SwitchUi, Target};
 use claude_account_sync::profiles::{CaptureOutcome, LoginState, ProfileStore};
 use claude_account_sync::replica::{self, ReplicaId};
@@ -370,9 +370,7 @@ fn run_profiles(
     let store = ProfileStore::new(&state_dir.root);
     match command {
         ProfilesCommand::List => {
-            if let Some((account, identity)) = claude_account_sync::profiles::read_cli_identity() {
-                store.record_identity(&account, &identity)?;
-            }
+            store.refresh_identities(data_dir);
             let login = LoginState::read(data_dir);
             let mut rows = picker::rows(&store.list()?, &login, std::time::SystemTime::now());
             rows.retain(|row| row.account != picker::NEW_SIGN_IN);
@@ -453,16 +451,30 @@ fn run_switch(
         _ if new => picker::NEW_SIGN_IN.to_owned(),
         Some(query) => store.resolve(&query)?.account,
         None => {
-            let login = LoginState::read(data_dir);
-            let rows = picker::rows(&store.list()?, &login, std::time::SystemTime::now());
-            let chosen = if gui {
-                picker::pick_gui(&rows, reason)?
-            } else if std::io::stdin().is_terminal() {
-                picker::pick_terminal(&rows)?
-            } else {
+            if !gui && !std::io::stdin().is_terminal() {
                 anyhow::bail!("name the account to switch to, or pass --gui; see `profiles`");
-            };
-            chosen.context("cancelled")?
+            }
+            // Removing an account shows the picker again, without that account.
+            loop {
+                store.refresh_identities(data_dir);
+                let login = LoginState::read(data_dir);
+                let rows = picker::rows(&store.list()?, &login, std::time::SystemTime::now());
+                let chosen = if gui {
+                    picker::pick_gui(&rows, reason)?
+                } else {
+                    picker::pick_terminal(&rows)?
+                };
+                match chosen.context("cancelled")? {
+                    PickerChoice::Switch(account) => break account,
+                    PickerChoice::Remove(account) => {
+                        store.forget(&account)?;
+                        log::info!("removed the saved account {account}");
+                        if !gui {
+                            println!("removed {account}");
+                        }
+                    }
+                }
+            }
         }
     };
     let ui: &dyn SwitchUi = if gui { &GuiUi } else { &TerminalUi };

@@ -95,7 +95,7 @@ claude-account-sync switch --new --dry-run --json
 claude-account-sync profiles label <account> <label>
 ```
 
-`profiles --json` returns `login` (the signed-in account) and `profiles`, each with `name`, `email` (when known), `selectable`, and `status`. Names and email addresses come from the Claude Code CLI's profile cache in `~/.claude.json`; an account shows as `account <uuid prefix>` until the CLI has fetched its profile, and `profiles label` overrides the name. `switch` also accepts a name or email address. An account that is not selectable needs one sign-in in the app, and the watcher saves it when the app next quits while signed in.
+`profiles --json` returns `login` (the signed-in account) and `profiles`, each with `name`, `email` (when known), `selectable`, and `status`. The watcher keeps names and email addresses current from the app's cache of the signed-in account, with the Claude Code CLI's profile cache in `~/.claude.json` filling gaps; an account shows as `account <uuid prefix>` until its name is known, and `profiles label` overrides the name. `profiles forget <account>` removes a saved account; the picker window also offers **Remove…**. `switch` also accepts a name or email address. An account that is not selectable needs one sign-in in the app, and the watcher saves it when the app next quits while signed in.
 
 To add an account, use `switch --new` (or the picker's "+ Sign in to another account"). It saves the current sign-in, removes it from the app without signing out, and restarts the app on its sign-in page. Never tell the user to sign out to add an account.
 

@@ -334,6 +334,7 @@ mod tests {
                 last_used: "now".into(),
                 status: "signed in now".into(),
                 selectable: false,
+                removable: false,
             }],
         };
         assert_eq!(state.tooltip(), "Claude account: Work");

@@ -22,6 +22,7 @@
 //! - [`picker`]: asks the user which account to use, in a window or in the terminal.
 //! - [`observer`]: lets the watcher save sign-ins, record when each account was used, and react to a sign-out.
 
+pub mod app_identity;
 pub mod observer;
 pub mod picker;
 pub mod switch;
@@ -160,11 +161,14 @@ pub struct Profile {
 
 /// An account's name and email address.
 ///
-/// The desktop app stores neither in a readable form. The Claude Code CLI that the app starts for Code tab
-/// sessions caches the profile of the account that it signs in with in `oauthAccount` of `~/.claude.json`
-/// (`$CLAUDE_CONFIG_DIR/.claude.json` when that is set). That cache holds one account at a time, so the watcher
-/// copies it into the matching profile whenever it changes, and each account's identity becomes known after its
-/// first Code tab session.
+/// Two caches hold them, one account at a time, so the watcher copies them into the matching profile after each
+/// pass (see [`ProfileStore::refresh_identities`]):
+///
+/// - The app's claude.ai page caches the signed-in account in IndexedDB (see [`app_identity`]). It is current, so
+///   its values replace the stored ones, for example after the user renames the account.
+/// - The Claude Code CLI caches the profile of the account that it signs in with in `oauthAccount` of
+///   `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when that is set). It also holds the organization name,
+///   but it can lag behind the app, so it only fills missing values.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
@@ -461,19 +465,65 @@ impl ProfileStore {
         self.save_meta(&profile)
     }
 
-    /// Stores `identity` in the profile of `account` when it differs. Creates the profile when it is missing.
+    /// Merges `identity` into the profile of `account`, and returns `true` when that changed the profile. Does
+    /// nothing when the profile is missing, so that an account that the user removed does not come back from a
+    /// cache. A field that `identity` lacks keeps its stored value. With `overwrite`, a field that `identity` has
+    /// replaces the stored value; without it, the field only fills a missing value.
     pub fn record_identity(
         &self,
         account: &str,
         identity: &Identity,
+        overwrite: bool,
     ) -> Result<bool, ProfileError> {
-        let mut profile = self.load_or_new(account)?;
-        if profile.identity.as_ref() == Some(identity) {
+        let Some(mut profile) = self.load(account)? else {
+            return Ok(false);
+        };
+        let old = profile.identity.clone().unwrap_or(Identity {
+            display_name: None,
+            email: None,
+            organization_name: None,
+        });
+        let merge = |new: &Option<String>, old: Option<String>| {
+            if overwrite {
+                new.clone().or(old)
+            } else {
+                old.or_else(|| new.clone())
+            }
+        };
+        let merged = Identity {
+            display_name: merge(&identity.display_name, old.display_name),
+            email: merge(&identity.email, old.email),
+            organization_name: merge(&identity.organization_name, old.organization_name),
+        };
+        if profile.identity.as_ref() == Some(&merged) {
             return Ok(false);
         }
-        profile.identity = Some(identity.clone());
+        profile.identity = Some(merged);
         self.save_meta(&profile)?;
         Ok(true)
+    }
+
+    /// Updates the names and email addresses of the accounts from the app's cache, which shows the current
+    /// values, and fills missing ones from the Claude Code CLI's profile cache, which may be older. Returns the
+    /// accounts whose profile changed.
+    pub fn refresh_identities(&self, data_dir: &Path) -> Vec<String> {
+        let mut changed = Vec::new();
+        let mut record = |account: &str, identity: &Identity, overwrite: bool| match self
+            .record_identity(account, identity, overwrite)
+        {
+            Ok(true) if !changed.iter().any(|seen| seen == account) => {
+                changed.push(account.to_owned());
+            }
+            Ok(_) => {}
+            Err(error) => log::warn!("cannot store the name of {account}: {error}"),
+        };
+        for (account, identity) in app_identity::read_app_identities(data_dir) {
+            record(&account, &identity, true);
+        }
+        if let Some((account, identity)) = read_cli_identity() {
+            record(&account, &identity, false);
+        }
+        changed
     }
 
     /// Records that the app signed out of `account`, which most likely revoked its saved sign-in.
@@ -892,10 +942,37 @@ mod tests {
             email: Some("a@example.com".into()),
             organization_name: None,
         };
-        assert!(store.record_identity(A, &identity).unwrap());
-        assert!(!store.record_identity(A, &identity).unwrap());
+        assert!(store.record_identity(A, &identity, true).unwrap());
+        assert!(!store.record_identity(A, &identity, true).unwrap());
         let profile = store.load(A).unwrap().unwrap();
         assert_eq!(profile.display_name(), "Abelia 2");
+        assert_eq!(profile.email(), Some("a@example.com"));
+        // An older source fills only missing fields; a current one replaces them and keeps what it lacks.
+        let older = Identity {
+            display_name: Some("Old name".into()),
+            email: None,
+            organization_name: Some("Org".into()),
+        };
+        assert!(store.record_identity(A, &older, false).unwrap());
+        let profile = store.load(A).unwrap().unwrap();
+        assert_eq!(profile.display_name(), "Abelia 2");
+        assert_eq!(
+            profile
+                .identity
+                .as_ref()
+                .unwrap()
+                .organization_name
+                .as_deref(),
+            Some("Org")
+        );
+        let renamed = Identity {
+            display_name: Some("Abelia Two".into()),
+            email: None,
+            organization_name: None,
+        };
+        assert!(store.record_identity(A, &renamed, true).unwrap());
+        let profile = store.load(A).unwrap().unwrap();
+        assert_eq!(profile.display_name(), "Abelia Two");
         assert_eq!(profile.email(), Some("a@example.com"));
         store.set_label(A, Some("Work".into())).unwrap();
         assert_eq!(store.load(A).unwrap().unwrap().display_name(), "Work");
