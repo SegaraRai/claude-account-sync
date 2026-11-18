@@ -4,7 +4,9 @@ This file lists the changes that users notice in each release. [docs/releasing.m
 
 ## Unreleased
 
-First release.
+## [0.1.0] - 2026-11-19
+
+First release: share Code tab sessions between the accounts on one computer, and switch the desktop app between them without signing out.
 
 ### Features
 
@@ -13,7 +15,7 @@ First release.
 - **Switching:** Add another account without signing out of the current one, with `switch --new`.
 - **Switching:** Show an account picker with each account's name, email, and last use when the user signs out of the app.
 - **Switching:** Remove a saved account from the picker with **Remove…**, or with `profiles forget`.
-- **Switching:** Keep each account's name and email address up to date from the app's own cache of the signed-in account, so that accounts show their names without a Code tab session.
+- **Switching:** Show each account's name and email address, kept up to date from the app's own cache of the signed-in account.
 - **Tray:** Switch accounts from an icon in the Windows notification area or the macOS menu bar.
-- **Install:** Install the CLI and a background agent that runs at login on Windows and macOS, with `install` and `uninstall`.
+- **Install:** Install the CLI and a background agent that runs at login on Windows and macOS, with `install` and `uninstall`. Release archives are available for Windows x64, Windows Arm64, and macOS on Apple silicon.
 - **Plugin:** Use the tool from Claude Code through the `account-sync` plugin and its skill.
