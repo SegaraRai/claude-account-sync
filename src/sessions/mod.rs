@@ -208,6 +208,38 @@ pub fn count_records(dir: &Path) -> usize {
     })
 }
 
+/// Maps CLI session IDs to session titles, from the records in every replica under `sessions_root`. Unreadable
+/// records are skipped. A record without a title maps to its record ID.
+pub fn titles_by_cli_session(sessions_root: &Path) -> BTreeMap<String, String> {
+    let mut titles = BTreeMap::new();
+    let Ok(accounts) = crate::replica::discover(sessions_root) else {
+        return titles;
+    };
+    for id in accounts {
+        let dir = sessions_root.join(&id.account).join(&id.org);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(session_id) = name
+                .strip_suffix(".json")
+                .filter(|s| record::is_session_id(s))
+            else {
+                continue;
+            };
+            let Ok(Some(bytes)) = read_regular(&entry.path(), MAX_RECORD_LEN) else {
+                continue;
+            };
+            if let Ok(record) = SessionRecord::parse(&bytes, session_id) {
+                let title = record.title.unwrap_or_else(|| session_id.to_owned());
+                titles.entry(record.cli_session_id).or_insert(title);
+            }
+        }
+    }
+    titles
+}
+
 fn load_record(path: &Path, id: &str) -> Result<LoadedRecord, String> {
     let bytes = read_regular(path, MAX_RECORD_LEN)
         .map_err(|e| e.to_string())?

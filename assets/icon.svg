@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>claude-account-sync</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7B61FF"/>
+      <stop offset="1" stop-color="#1FB5A5"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <marker id="head" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="2.6" markerHeight="2.6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#FFFFFF"/>
+    </marker>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#shine)"/>
+
+  <!-- Two arcs that chase each other: switching -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" marker-end="url(#head)">
+    <path d="M115.0 190.2 A156 156 0 0 1 382.6 166.4"/>
+    <path d="M397.0 321.8 A156 156 0 0 1 129.4 345.6"/>
+  </g>
+
+  <!-- Account: a second one peeks from behind the first -->
+  <g fill="#FFFFFF" fill-opacity="0.45">
+    <circle cx="298" cy="214" r="32"/>
+    <path d="M246 326 C246 288 268 264 298 264 C328 264 350 288 350 326 Z"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="236" cy="224" r="38"/>
+    <path d="M172 340 C172 296 200 272 236 272 C272 272 300 296 300 340 Z"/>
+  </g>
+</svg>

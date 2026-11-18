@@ -11,6 +11,9 @@ use claude_account_sync::app::{AppStatus, SESSIONS_DIR};
 use claude_account_sync::config::{Config, ConfigKey, ReplicaPattern};
 use claude_account_sync::file_ops::{self, BackupUsage};
 use claude_account_sync::pass::{self, PassOptions, Report};
+use claude_account_sync::profiles::picker::{self, GuiUi, PickerReason, TerminalUi};
+use claude_account_sync::profiles::switch::{self, SwitchOptions, SwitchUi, Target};
+use claude_account_sync::profiles::{CaptureOutcome, LoginState, ProfileStore};
 use claude_account_sync::replica::{self, ReplicaId};
 use claude_account_sync::state::StateDir;
 use claude_account_sync::{install, logging, sessions, watch};
@@ -58,6 +61,61 @@ enum Command {
     /// Shows or changes the config.
     #[command(subcommand)]
     Config(ConfigCommand),
+    /// Shows the account icon in the notification area (the menu bar on macOS) until you quit it. The installed
+    /// agent shows it at login, so this is for trying it out.
+    Tray {
+        /// Starts every switch from the menu with `--dry-run`, so that nothing changes.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Lists the accounts whose sign-in is saved, or changes them.
+    Profiles {
+        #[command(subcommand)]
+        command: Option<ProfilesCommand>,
+    },
+    /// Switches the app to another saved account without signing out. Quits and restarts the app.
+    Switch {
+        /// The account: its UUID, the start of its UUID, or its label. Without it, a picker asks.
+        #[arg(conflicts_with = "new")]
+        target: Option<String>,
+        /// Saves and removes the current sign-in without signing out, and opens the app's sign-in page, so that
+        /// another account can sign in.
+        #[arg(long)]
+        new: bool,
+        /// Asks in windows instead of the terminal.
+        #[arg(long)]
+        gui: bool,
+        /// Why the picker opens, which changes its message.
+        #[arg(long, value_enum, default_value = "switch")]
+        reason: PickerReason,
+        /// Quits running Claude Code sessions without asking.
+        #[arg(long)]
+        yes: bool,
+        /// Leaves the app stopped after the switch.
+        #[arg(long)]
+        no_launch: bool,
+        /// Seconds to wait for the app to quit.
+        #[arg(long, default_value_t = 600)]
+        quit_timeout_secs: u64,
+        /// Asks the questions and shows the plan, but neither stops the app nor changes files.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfilesCommand {
+    /// Lists the saved accounts, most recently used first.
+    List,
+    /// Saves the current sign-in now. The app must be stopped.
+    Save,
+    /// Names an account, or removes its name when no label is given.
+    Label {
+        account: String,
+        label: Option<String>,
+    },
+    /// Deletes an account's saved sign-in.
+    Forget { account: String },
 }
 
 #[derive(Subcommand)]
@@ -220,6 +278,48 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             });
         }
         Command::Config(command) => return run_config(command, &config_path, cli.json),
+        Command::Tray { dry_run } => {
+            claude_account_sync::tray::run(
+                data_dir()?,
+                state_dir.clone(),
+                claude_account_sync::tray::TrayOptions { dry_run },
+            )?;
+        }
+        Command::Profiles { command } => run_profiles(
+            command.unwrap_or(ProfilesCommand::List),
+            &data_dir()?,
+            &state_dir,
+            cli.json,
+        )?,
+        Command::Switch {
+            target,
+            new,
+            gui,
+            reason,
+            yes,
+            no_launch,
+            quit_timeout_secs,
+            dry_run,
+        } => {
+            let options = SwitchOptions {
+                quit_timeout: Duration::from_secs(quit_timeout_secs),
+                launch: !no_launch,
+                yes,
+                dry_run,
+            };
+            let result = data_dir().and_then(|data_dir| {
+                run_switch(
+                    target, new, gui, reason, &options, &data_dir, &state_dir, cli.json,
+                )
+            });
+            if gui
+                && let Err(error) = &result
+                && format!("{error:#}") != "cancelled"
+            {
+                let _ = picker::alert_gui(&format!("The account switch failed: {error:#}"));
+            }
+            result?;
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -259,6 +359,146 @@ fn run_config(command: ConfigCommand, path: &Path, json: bool) -> anyhow::Result
         println!("saved {}", path.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_profiles(
+    command: ProfilesCommand,
+    data_dir: &Path,
+    state_dir: &StateDir,
+    json: bool,
+) -> anyhow::Result<()> {
+    let store = ProfileStore::new(&state_dir.root);
+    match command {
+        ProfilesCommand::List => {
+            if let Some((account, identity)) = claude_account_sync::profiles::read_cli_identity() {
+                store.record_identity(&account, &identity)?;
+            }
+            let login = LoginState::read(data_dir);
+            let mut rows = picker::rows(&store.list()?, &login, std::time::SystemTime::now());
+            rows.retain(|row| row.account != picker::NEW_SIGN_IN);
+            if json {
+                print_json(&json!({ "login": login, "profiles": rows }));
+            } else if rows.is_empty() {
+                println!(
+                    "no saved accounts yet; the watcher saves a sign-in when the app quits while signed in"
+                );
+            } else {
+                for row in &rows {
+                    let status = if row.status.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", row.status)
+                    };
+                    println!(
+                        "{}  {}  last used {}{status}",
+                        row.account,
+                        row.label(),
+                        row.last_used
+                    );
+                }
+            }
+        }
+        ProfilesCommand::Save => {
+            anyhow::ensure!(
+                !claude_account_sync::app::app_is_running(),
+                "quit the app first; it locks its cookie database while it runs"
+            );
+            let login = LoginState::read(data_dir);
+            let account = login
+                .signed_in_account()
+                .context("the app is not signed in")?
+                .to_owned();
+            let outcome = store.capture(data_dir, &account, std::time::SystemTime::now())?;
+            let saved = outcome == CaptureOutcome::Saved;
+            print_done(json, json!({ "account": account, "saved": saved }), || {
+                if saved {
+                    format!("saved the sign-in of {account}")
+                } else {
+                    format!("the saved sign-in of {account} is up to date")
+                }
+            });
+        }
+        ProfilesCommand::Label { account, label } => {
+            let profile = store.resolve(&account)?;
+            store.set_label(&profile.account, label)?;
+            print_done(json, json!({ "account": profile.account }), || {
+                "saved".into()
+            });
+        }
+        ProfilesCommand::Forget { account } => {
+            let profile = store.resolve(&account)?;
+            store.forget(&profile.account)?;
+            print_done(json, json!({ "forgot": profile.account }), || {
+                format!("deleted the saved sign-in of {}", profile.account)
+            });
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_switch(
+    target: Option<String>,
+    new: bool,
+    gui: bool,
+    reason: PickerReason,
+    options: &SwitchOptions,
+    data_dir: &Path,
+    state_dir: &StateDir,
+    json: bool,
+) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    let store = ProfileStore::new(&state_dir.root);
+    let account = match target {
+        _ if new => picker::NEW_SIGN_IN.to_owned(),
+        Some(query) => store.resolve(&query)?.account,
+        None => {
+            let login = LoginState::read(data_dir);
+            let rows = picker::rows(&store.list()?, &login, std::time::SystemTime::now());
+            let chosen = if gui {
+                picker::pick_gui(&rows, reason)?
+            } else if std::io::stdin().is_terminal() {
+                picker::pick_terminal(&rows)?
+            } else {
+                anyhow::bail!("name the account to switch to, or pass --gui; see `profiles`");
+            };
+            chosen.context("cancelled")?
+        }
+    };
+    let ui: &dyn SwitchUi = if gui { &GuiUi } else { &TerminalUi };
+    let target = if account == picker::NEW_SIGN_IN {
+        Target::NewSignIn
+    } else {
+        Target::Account(account.clone())
+    };
+    let report = switch::switch(data_dir, state_dir, &target, options, ui)?;
+    let destination = match &target {
+        Target::Account(account) => account.clone(),
+        Target::NewSignIn => "the sign-in page".to_owned(),
+    };
+    print_done(json, serde_json::to_value(&report)?, || {
+        if report.already_active {
+            format!("{account} is already signed in")
+        } else if report.dry_run {
+            let stop = match report.stop {
+                Some("kill") => "kill the signed-out app, ",
+                Some("quit") => "ask the app to quit, ",
+                Some(_) => "wait for you to quit the app, ",
+                None => "",
+            };
+            format!(
+                "would {stop}save the current sign-in, switch to {destination}, and start the app; {} session(s) would stop",
+                report.sessions_to_stop.len()
+            )
+        } else {
+            let mut text = format!("switched to {destination}");
+            if let Some(dir) = &report.backup_dir {
+                text += &format!("\nbackup: {}", dir.display());
+            }
+            text
+        }
+    });
+    Ok(())
 }
 
 /// One row of `accounts`.

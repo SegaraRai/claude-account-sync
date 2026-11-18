@@ -86,6 +86,11 @@ impl StateDir {
         self.lock_file("watcher.lock")
     }
 
+    /// Takes the lock file `name` in the state folder, for work that must not run twice at once.
+    pub fn lock_named(&self, name: &str) -> Result<StateLock, StateError> {
+        self.lock_file(name)
+    }
+
     fn lock_file(&self, name: &str) -> Result<StateLock, StateError> {
         let path = self.root.join(name);
         let io_error = |source| StateError::Io {

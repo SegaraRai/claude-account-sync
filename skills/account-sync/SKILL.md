@@ -1,6 +1,6 @@
 ---
 name: account-sync
-description: Share Claude desktop Code tab sessions, the task backlog, and local scheduled tasks between Claude accounts on the same computer with the claude-account-sync CLI. Use when the user wants sessions from another account to appear in the sidebar, asks whether account sync works, wants to change what is synced or which accounts take part, or wants to install, update, pause, or remove the sync watcher.
+description: Share Claude desktop Code tab sessions, the task backlog, and local scheduled tasks between Claude accounts on the same computer, and switch the desktop app between accounts without signing out, with the claude-account-sync CLI. Use when the user wants to switch Claude accounts quickly, when the user wants sessions from another account to appear in the sidebar, asks whether account sync works, wants to change what is synced or which accounts take part, or wants to install, update, pause, or remove the sync watcher.
 ---
 
 # claude-account-sync
@@ -75,10 +75,31 @@ claude-account-sync config include <account-uuid>[/<org-uuid>]
 | `watch-interval-secs` | 5 to 86400 | Seconds between watcher passes without file changes |
 | `backups-to-keep` | 1 to 10000 | Backup folders to keep |
 | `data-dir` | absolute path | The app's data folder, when the tool cannot find it |
+| `save-sign-ins` | `true` / `false` | Let the watcher save each account's sign-in and record its last use |
+| `picker-on-sign-out` | `true` / `false` | Open the account picker when the app signs out |
+| `tray-icon` | `true` / `false` | Show the account icon in the notification area or menu bar (takes effect after `install`) |
 
 An excluded account or replica is neither read nor written. When it is included again, it receives the other accounts' entries, and entries that were deleted elsewhere meanwhile are removed from it. Tell the user this before you include an account again.
 
 The watcher reads the config before each pass. A `data-dir` change needs `install` again to restart the watcher.
+
+## Switch accounts
+
+The tool saves each account's encrypted sign-in under `profiles/` in the state folder and restores it, so the user switches without signing out. After `install`, the agent shows an account icon in the notification area (menu bar on macOS) whose menu switches accounts; point the user to it first. Signing out in the app most likely revokes that sign-in, so tell the user not to sign out to switch.
+
+```sh
+claude-account-sync profiles --json
+claude-account-sync switch <label|uuid|uuid-prefix> --dry-run --json
+claude-account-sync switch <label|uuid|uuid-prefix> --json
+claude-account-sync switch --new --dry-run --json
+claude-account-sync profiles label <account> <label>
+```
+
+`profiles --json` returns `login` (the signed-in account) and `profiles`, each with `name`, `email` (when known), `selectable`, and `status`. Names and email addresses come from the Claude Code CLI's profile cache in `~/.claude.json`; an account shows as `account <uuid prefix>` until the CLI has fetched its profile, and `profiles label` overrides the name. `switch` also accepts a name or email address. An account that is not selectable needs one sign-in in the app, and the watcher saves it when the app next quits while signed in.
+
+To add an account, use `switch --new` (or the picker's "+ Sign in to another account"). It saves the current sign-in, removes it from the app without signing out, and restarts the app on its sign-in page. Never tell the user to sign out to add an account.
+
+`switch` quits and restarts the desktop app, which stops every Claude Code session in it, including the one you run in when you run inside the app. Always run `--dry-run --json` first, show the user `sessionsToStop` and `stop`, and get agreement. Then prefer to let the user run `switch --gui` themselves, or run `switch` with `--yes` only after they agreed. `stop` is `quit` when the tool can ask the app to quit (on Windows, when it finds the app's main window), `user` when the user has to quit it, and `kill` when the app is signed out. If the app ignores the quit request for 60 seconds, a window asks the user to quit it, and `switch` waits up to `--quit-timeout-secs`. `backupDir` in the result holds the replaced sign-in files.
 
 ## Install, update, or remove the watcher
 

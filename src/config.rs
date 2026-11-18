@@ -74,6 +74,15 @@ pub struct Config {
     /// overrides this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_dir: Option<PathBuf>,
+    /// Whether the watcher saves each account's sign-in while the app is stopped, so that `switch` can restore it.
+    #[serde(default = "enabled")]
+    pub save_sign_ins: bool,
+    /// Whether the watcher opens the account picker when the app signs out.
+    #[serde(default = "enabled")]
+    pub picker_on_sign_out: bool,
+    /// Whether the agent shows the account icon in the notification area (the menu bar on macOS).
+    #[serde(default = "enabled")]
+    pub tray_icon: bool,
 }
 
 fn default_version() -> u32 {
@@ -97,6 +106,9 @@ impl Default for Config {
             watch_interval_secs: default_watch_interval(),
             backups_to_keep: default_backups_to_keep(),
             data_dir: None,
+            save_sign_ins: true,
+            picker_on_sign_out: true,
+            tray_icon: true,
         }
     }
 }
@@ -143,6 +155,12 @@ pub enum ConfigKey {
     BackupsToKeep,
     /// `dataDir`: an absolute path.
     DataDir,
+    /// `saveSignIns`: `true` or `false`.
+    SaveSignIns,
+    /// `pickerOnSignOut`: `true` or `false`.
+    PickerOnSignOut,
+    /// `trayIcon`: `true` or `false`.
+    TrayIcon,
 }
 
 impl fmt::Display for ConfigKey {
@@ -154,6 +172,9 @@ impl fmt::Display for ConfigKey {
             Self::WatchIntervalSecs => "watch-interval-secs",
             Self::BackupsToKeep => "backups-to-keep",
             Self::DataDir => "data-dir",
+            Self::SaveSignIns => "save-sign-ins",
+            Self::PickerOnSignOut => "picker-on-sign-out",
+            Self::TrayIcon => "tray-icon",
         };
         f.write_str(name)
     }
@@ -227,6 +248,9 @@ impl Config {
                 next.backups_to_keep = value.parse().map_err(|_| invalid("expected an integer"))?
             }
             ConfigKey::DataDir => next.data_dir = Some(PathBuf::from(value)),
+            ConfigKey::SaveSignIns => next.save_sign_ins = parse_bool()?,
+            ConfigKey::PickerOnSignOut => next.picker_on_sign_out = parse_bool()?,
+            ConfigKey::TrayIcon => next.tray_icon = parse_bool()?,
         }
         next.validate()?;
         *self = next;
@@ -245,6 +269,9 @@ impl Config {
             ConfigKey::WatchIntervalSecs => self.watch_interval_secs = defaults.watch_interval_secs,
             ConfigKey::BackupsToKeep => self.backups_to_keep = defaults.backups_to_keep,
             ConfigKey::DataDir => self.data_dir = None,
+            ConfigKey::SaveSignIns => self.save_sign_ins = defaults.save_sign_ins,
+            ConfigKey::PickerOnSignOut => self.picker_on_sign_out = defaults.picker_on_sign_out,
+            ConfigKey::TrayIcon => self.tray_icon = defaults.tray_icon,
         }
     }
 

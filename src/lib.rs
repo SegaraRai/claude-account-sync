@@ -22,6 +22,8 @@
 //! - [`item_file`]: merges collections that the app stores as an item array in one JSON file.
 //! - [`file_ops`]: reads and writes files atomically and keeps backups.
 //! - [`watch`], [`install`], [`logging`]: run the background watcher.
+//! - [`profiles`]: saves each account's sign-in and switches the app between accounts without signing out.
+//! - [`tray`]: shows the account menu in the notification area or the menu bar.
 
 pub mod app;
 pub mod backlog;
@@ -32,8 +34,10 @@ pub mod item_file;
 pub mod logging;
 pub mod merge;
 pub mod pass;
+pub mod profiles;
 pub mod replica;
 pub mod scheduled_tasks;
 pub mod sessions;
 pub mod state;
+pub mod tray;
 pub mod watch;

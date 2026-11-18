@@ -3,6 +3,8 @@
 //! The interval catches changes that produce no file event, such as the app starting or stopping, which changes
 //! which replicas a pass may write.
 //!
+//! After each pass, [`Observer`] saves the sign-in while the app is stopped and reacts when the app signs out.
+//!
 //! The watcher reads `config.json` before each pass, and a change to that file starts a pass. A change to
 //! `dataDir` takes effect only after the watcher restarts, because the watcher watches the folder that it found
 //! at startup.
@@ -16,6 +18,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use crate::app::{AppStatus, SESSIONS_DIR};
 use crate::config::Config;
 use crate::pass::{self, PassOptions};
+use crate::profiles::observer::Observer;
 use crate::state::StateDir;
 
 /// Time without further events before a pass starts. The app writes several files for one change.
@@ -47,15 +50,22 @@ pub fn run(
     log::info!("watching {}", data_dir.display());
 
     let mut config_interval = Duration::from_secs(Config::default().watch_interval_secs);
+    let mut observer = Observer::default();
     loop {
+        let mut recheck = None;
         match Config::load(&state_dir.config_file()) {
             Ok(config) => {
                 config_interval = Duration::from_secs(config.watch_interval_secs);
                 run_pass(data_dir, state_dir, &config);
+                recheck = observer.observe(data_dir, state_dir, &config);
             }
             Err(error) => log::error!("skipped a pass: {error}"),
         }
-        let deadline = Instant::now() + interval.unwrap_or(config_interval);
+        let mut wait = interval.unwrap_or(config_interval);
+        if let Some(recheck) = recheck {
+            wait = wait.min(recheck);
+        }
+        let deadline = Instant::now() + wait;
         let mut first_event: Option<Instant> = None;
         loop {
             let now = Instant::now();
