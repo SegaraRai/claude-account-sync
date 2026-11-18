@@ -164,15 +164,12 @@ pub fn request_quit() -> bool {
 /// Returns `true` when [`request_quit`] can ask the running app to quit: on macOS always, on Windows when the main
 /// window is found.
 pub fn can_request_quit() -> bool {
-    if cfg!(target_os = "macos") {
-        return true;
-    }
     #[cfg(windows)]
     {
         !win32::main_windows().is_empty()
     }
     #[cfg(not(windows))]
-    false
+    cfg!(target_os = "macos")
 }
 
 /// Returns the process IDs of the app's main processes: app processes whose parent is not an app process. The
