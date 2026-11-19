@@ -327,22 +327,28 @@ fn no_choice_message(rows: &[PickerRow]) -> String {
 
 fn sessions_message(sessions: &[RunningSession]) -> String {
     let mut text = format!(
-        "{} Claude Code session(s) worked in the last {} minutes. Quitting Claude stops them:\n",
+        "{} Claude Code session(s) are still working. Quitting Claude stops them:\n",
         sessions.len(),
-        crate::app::ACTIVE_SESSION_WINDOW.as_secs() / 60
     );
     let now = SystemTime::now();
     for session in sessions.iter().take(10) {
+        let state = match (session.busy, session.background_tasks) {
+            (true, _) => format!(
+                "working, since {}",
+                format_time(session.last_activity_at, now)
+            ),
+            (false, 1) => "1 background task".to_owned(),
+            (false, n) => format!("{n} background tasks"),
+        };
         text += &format!(
-            "\n  • {}  (last write {})",
+            "\n  • {}  ({state})",
             session.title.as_deref().unwrap_or(&session.cli_session_id),
-            format_time(session.last_write_at, now)
         );
     }
     if sessions.len() > 10 {
         text += &format!("\n  … and {} more", sessions.len() - 10);
     }
-    text + "\n\nA session in the middle of a turn stops there; you can continue it after the switch. Quit and switch anyway?"
+    text + "\n\nA turn stops where it is, and background tasks such as commands, monitors, and agents end; you can continue the sessions after the switch. Quit and switch anyway?"
 }
 
 fn quit_message(target: &str) -> String {

@@ -4,6 +4,10 @@ This file lists the changes that users notice in each release. [docs/releasing.m
 
 ## Unreleased
 
+### Fixes
+
+- **Switching:** Ask before quitting the app only for Claude Code sessions that are in the middle of a turn or have background tasks running, such as commands, monitors, or agents. Sessions that finished a few minutes ago no longer trigger the question. In `switch --json`, each entry of `sessionsToStop` now has `busy`, `backgroundTasks`, and `lastActivityAt` instead of `lastWriteAt`.
+
 ## [0.1.0] - 2026-11-19
 
 First release: share Code tab sessions between the accounts on one computer, and switch the desktop app between them without signing out.

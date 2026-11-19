@@ -56,11 +56,19 @@ Signing out in the app most likely revokes that session on the server, and the t
 
 `switch` does this:
 
-1. If Claude Code sessions of the app wrote their transcript in the last 5 minutes, it lists them and asks before it continues, because quitting the app stops them.
+1. If Claude Code sessions of the app are working, it lists them and asks before it continues, because quitting the app stops them (see [Running sessions](#running-sessions)).
 2. It asks the app to quit normally, so that the app saves its data first. On macOS it sends the quit Apple event. On Windows, closing the window only hides the app in the notification area, so the tool sends the app's main window the messages that Windows sends when it closes applications at sign-out (`WM_QUERYENDSESSION` and `WM_ENDSESSION` with `ENDSESSION_CLOSEAPP`). The app answers them with the same quit as its tray menu's Quit. If the app is still running after 60 seconds, a window asks the user to quit it, and the switch continues when it has exited, for up to `--quit-timeout-secs`. A signed-out app holds no account data, so the tool kills it.
 3. It saves the current sign-in, so that switching back restores it.
 4. It restores the chosen account's sign-in, or for `--new` removes the sign-in (the OAuth fields, `lastKnownAccountUuid`, and the cookie database). It copies the files that it replaces to `backups/<time>/sign-in/`. Other fields of `config.json` stay as they are.
 5. It starts the app again.
+
+## Running sessions
+
+Each running Claude Code process registers itself in `sessions/<pid>.json` in the CLI's config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`). The file names the session, the entry point (`claude-desktop` for the app's sessions), and the status: `busy` while a turn runs, `idle` otherwise. The tool uses the files of the app's sessions whose process still runs and started before it registered, which rules out a reused process ID.
+
+The status stays `idle` while background tasks run after a turn. For idle sessions, the tool reads the transcript (`projects/<project>/<session>.jsonl`): the tool result that starts a background command, monitor, or agent records its task ID (`backgroundTaskId`, `taskId`, or `agentId` with `isAsync`), and the CLI records a `<task-notification>` with the same ID when the task ends. A task that started after the process started and has no notification yet still runs. Tasks from before the process started ended with the previous process.
+
+A session counts as working when it is busy or has such a task. Without the `sessions` folder, as with older CLI versions, the tool falls back to sessions whose transcript changed in the last 5 minutes, which can include idle ones.
 
 ## Windows and the Microsoft Store app
 

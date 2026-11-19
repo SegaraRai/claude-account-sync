@@ -31,6 +31,7 @@ pub mod config;
 pub mod file_ops;
 pub mod install;
 pub mod item_file;
+pub mod live_sessions;
 pub mod logging;
 pub mod merge;
 pub mod pass;

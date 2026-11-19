@@ -92,7 +92,7 @@ claude-account-sync profiles forget <account>
 
 When you switch:
 
-- If Claude Code sessions in the app are working, the tool lists them and asks first, because quitting the app stops them. You can continue them after the switch.
+- If Claude Code sessions in the app are in the middle of a turn or have background tasks running, such as commands, monitors, or agents, the tool lists them and asks first, because quitting the app stops them. You can continue them after the switch.
 - The tool asks the app to quit, so that the app saves its data. If the app does not quit within 60 seconds, a window asks you to quit it, and the switch continues when it has.
 - The app starts again with the chosen account. The files that the switch replaced are kept in `backups/<time>/sign-in/`.
 

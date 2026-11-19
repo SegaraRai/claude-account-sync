@@ -355,77 +355,7 @@ fn installed_store_package_family() -> Option<String> {
         .find(|name| name.starts_with("Claude_"))
 }
 
-/// A Claude Code session that runs in the desktop app.
-/// How recently a session must have written its transcript to count as running.
-///
-/// A session writes its transcript as a turn goes on. A long tool call, such as a build, can leave it silent for a
-/// few minutes, so the window is generous.
-pub const ACTIVE_SESSION_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// A Claude Code session of the desktop app that is probably in the middle of a turn.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RunningSession {
-    pub cli_session_id: String,
-    /// The session's title from its sidebar record, when one is found.
-    pub title: Option<String>,
-    /// When the session last wrote its transcript, in Unix milliseconds.
-    pub last_write_at: i64,
-}
-
-/// Lists the desktop app's Claude Code sessions that wrote their transcript in the last
-/// [`ACTIVE_SESSION_WINDOW`]. Quitting the app stops them.
-///
-/// The process list cannot tell which session a CLI process serves: the app starts spare processes ahead of time
-/// and hands one to each new session, so the command line names no session. Instead, this function looks for
-/// transcripts under `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR/projects/`) that changed recently, and keeps
-/// those of sessions that have a sidebar record, which leaves out sessions of the CLI in a terminal.
-pub fn running_sessions(data_dir: &Path) -> Vec<RunningSession> {
-    let Some(projects) = claude_config_dir().map(|dir| dir.join("projects")) else {
-        return Vec::new();
-    };
-    let now = std::time::SystemTime::now();
-    let mut recent = Vec::new();
-    for project in std::fs::read_dir(projects).into_iter().flatten().flatten() {
-        for entry in std::fs::read_dir(project.path())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(id) = name.strip_suffix(".jsonl") else {
-                continue;
-            };
-            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
-                continue;
-            };
-            if now
-                .duration_since(modified)
-                .is_ok_and(|age| age <= ACTIVE_SESSION_WINDOW)
-                || modified > now
-            {
-                recent.push((id.to_owned(), crate::file_ops::unix_millis(modified)));
-            }
-        }
-    }
-    if recent.is_empty() {
-        return Vec::new();
-    }
-    let titles = crate::sessions::titles_by_cli_session(&data_dir.join(SESSIONS_DIR));
-    let mut sessions: Vec<RunningSession> = recent
-        .into_iter()
-        .filter_map(|(id, last_write_at)| {
-            Some(RunningSession {
-                title: Some(titles.get(&id)?.clone()),
-                cli_session_id: id,
-                last_write_at,
-            })
-        })
-        .collect();
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.last_write_at));
-    sessions.dedup_by(|a, b| a.cli_session_id == b.cli_session_id);
-    sessions
-}
+pub use crate::live_sessions::{ACTIVE_SESSION_WINDOW, RunningSession, running_sessions};
 
 /// Returns the Claude Code CLI's config folder: `$CLAUDE_CONFIG_DIR`, or `~/.claude`.
 pub fn claude_config_dir() -> Option<PathBuf> {
