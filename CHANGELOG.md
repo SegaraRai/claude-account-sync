@@ -4,9 +4,17 @@ This file lists the changes that users notice in each release. [docs/releasing.m
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-19
+
+The question before a switch now lists only the Claude Code sessions that are still working.
+
+### Breaking changes
+
+- **Switching:** In `switch --json`, each entry of `sessionsToStop` has `busy`, `backgroundTasks`, and `lastActivityAt` instead of `lastWriteAt`. Update scripts that read `lastWriteAt`.
+
 ### Fixes
 
-- **Switching:** Ask before quitting the app only for Claude Code sessions that are in the middle of a turn or have background tasks running, such as commands, monitors, or agents. Sessions that finished a few minutes ago no longer trigger the question. In `switch --json`, each entry of `sessionsToStop` now has `busy`, `backgroundTasks`, and `lastActivityAt` instead of `lastWriteAt`.
+- **Switching:** Ask before quitting the app only for Claude Code sessions that are in the middle of a turn or have background tasks running, such as commands, monitors, or agents. Sessions that finished a few minutes ago no longer trigger the question.
 
 ## [0.1.0] - 2026-11-19
 
